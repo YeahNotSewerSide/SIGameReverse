@@ -5,12 +5,30 @@ from string import ascii_lowercase
 from signalrcore.hub_connection_builder import HubConnectionBuilder
 from signalrcore.protocol.messagepack_protocol import MessagePackHubProtocol
 import time
+import Types
+import threading
 
 #API_ENTRY_POINT = 'https://vladimirkhil.com/api/si'
 
 #SERVER_ADRESS = 'https://sionline.ru/siserver/1'
 
 
+APPLICATIONS_DBs = {}
+
+def _register_application():
+    counter = 0
+    res = APPLICATIONS_DBs.get(str(counter),False)
+    while res != False:
+        counter += 1
+        res = APPLICATIONS_DBs.get(str(counter),False)
+
+    APPLICATIONS_DBs[str(counter)] = Types.Application_DB()
+    return counter
+
+def _unregister_application(id:int):
+    to_return = APPLICATIONS_DBs[str(id)].copy()
+    del APPLICATIONS_DBs[id]
+    return to_return
 
 
 LOGIN_URL = '/api/Account/LogOn'
@@ -20,6 +38,16 @@ USERAGENT = '{User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 
 def message_printer(message):
     print(message[0],message[1])
+
+def got_slice(message,id:int,lock):
+    APPLICATIONS_DBs[str(id)].append_slice(message.result)
+    lock.release()
+
+def got_slice_without_save(message,lock):
+    to_return = Types.Slice(message.result)
+    lock.release()
+    
+    
 
 class WEB_API:
     def __init__(self,url='https://vladimirkhil.com/api/si'):
@@ -63,6 +91,7 @@ class WEB_API:
 
 class API:
     def __init__(self,username,password=''):
+        self.DB_ID = _register_application()
         self.username = username
         self.password = password
         self.session = requests.Session()
@@ -71,6 +100,7 @@ class API:
         self.web = WEB_API()
         self.SERVER_ADDRESS = self.web.get_servers()[0]['uri']
         self.hub_connection = None
+        self.lock = threading.Lock()
 
     def get_token(self):
         ret = self.session.post(self.SERVER_ADDRESS+LOGIN_URL,data={'login':self.username,'password':self.password},headers={'User-Agent':USERAGENT})
@@ -84,6 +114,8 @@ class API:
 
 
     def online(self,message_handler=message_printer):
+        #handler = logging.StreamHandler()
+        #handler.setLevel(logging.DEBUG)
         self.hub_connection = HubConnectionBuilder()\
             .with_url(self.SERVER_ADDRESS+SONLINE_URL+self.token,options={
                                                                     "access_token_factory":self.token_factory
@@ -93,8 +125,9 @@ class API:
                 "keep_alive_interval": 10,
                 "reconnect_interval": 5,
                 "max_attempts": 5
-                })\
-            .with_hub_protocol(MessagePackHubProtocol())
+                })
+            
+            
 
         self.hub_connection.build()
         #self.get_token.on_message(print)
@@ -106,6 +139,8 @@ class API:
         self.hub_connection.on("GameChanged",print)
         self.hub_connection.on("GameDeleted",print)
         self.hub_connection.on("GameCreated",print)
+        #self.hub_connection.on("GetGamesSlice",lambda m: got_slice(m,self.DB_ID,self.lock))
+        #self.hub_connection.on_message(print)
         self.hub_connection.start()
         
         #print(1)
@@ -113,6 +148,17 @@ class API:
     def send_message(self,message):
         self.hub_connection.send("Say",[message])
 
+
+    def get_games_slice(self,FromId:int):  
+        self.lock.acquire()
+        #if save:
+        self.hub_connection.send('GetGamesSlice',[FromId],lambda m: got_slice(m,self.DB_ID,self.lock))
+        
+        self.lock.acquire()
+        self.lock.release()
+        return APPLICATIONS_DBs[str(self.DB_ID)].slices[-1]
+        
+        
 
 
 
@@ -127,6 +173,10 @@ if __name__ == '__main__':
     api.get_token()
     api.online()
     #api.send_message('12')
+    #data = api.get_games_slice(0)
+    #print(data)
     while True:
         time.sleep(1)
-        #api.send_message('12')
+        data = api.get_games_slice(0)
+        print(data)
+        
