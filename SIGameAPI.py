@@ -7,6 +7,8 @@ from signalrcore.protocol.messagepack_protocol import MessagePackHubProtocol
 import time
 import Types
 import threading
+import os
+import hashlib
 
 #API_ENTRY_POINT = 'https://vladimirkhil.com/api/si'
 
@@ -33,11 +35,16 @@ def _unregister_application(id:int):
 
 LOGIN_URL = '/api/Account/LogOn'
 SONLINE_URL = '/sionline?token='
+IMAGE_UPLOAD_URL = "/api/upload/image"
 
 USERAGENT = '{User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36}'
 
 def message_printer(message):
     print(message[0],message[1])
+
+def chat_handler(message,id:int):
+    return False
+
 
 def got_slice(message,id:int,lock):
     APPLICATIONS_DBs[str(id)].append_slice(message.result)
@@ -85,6 +92,9 @@ class WEB_API:
         ret = requests.get(self.server+'/Tags')
         return ret.json()
 
+    
+
+        
 
 
 
@@ -102,7 +112,40 @@ class API:
         self.hub_connection = None
         self.lock = threading.Lock()
 
-    def get_token(self):
+    def upload_image(self,filename:str):
+        path, actual_filename = os.path.split(filename)
+        filestream = open(filename,'rb')
+
+        # calculate hash of file
+        hasher = hashlib.sha1()
+
+        while True:
+            block = filestream.read(128)
+            if not block:
+                break
+            hasher.update(block)
+
+        file_hash = hasher.digest()
+        
+        # reset stream
+        filestream.seek(0)
+
+        files = {base64.b64encode(file_hash).decode('ascii'):(filestream)}
+
+        headers = {"Content-MD5":base64.b64encode(file_hash).decode('ascii')}
+        
+        ret = self.session.post(self.SERVER_ADDRESS+IMAGE_UPLOAD_URL,
+                                verify=False,
+                            files=files, 
+                            allow_redirects=False, 
+                            headers=headers)
+        
+        if ret.status_code != 200:
+            raise Exception("Image upload failed")
+
+        return ret.content.decode('ascii')
+
+    def login(self):
         ret = self.session.post(self.SERVER_ADDRESS+LOGIN_URL,data={'login':self.username,'password':self.password},headers={'User-Agent':USERAGENT})
         if ret.status_code != 200:
             raise Exception('Login Failed')
@@ -113,7 +156,7 @@ class API:
         return base64.b64encode(bytes(self.username,'utf-8')).decode('utf-8')
 
 
-    def online(self,message_handler=message_printer):
+    def online(self):
         #handler = logging.StreamHandler()
         #handler.setLevel(logging.DEBUG)
         self.hub_connection = HubConnectionBuilder()\
@@ -133,12 +176,12 @@ class API:
         #self.get_token.on_message(print)
         #message = ''
         #self.hub_connection.hub.on_message(message)
-        self.hub_connection.on("Say",message_handler)
+        #self.hub_connection.on("Say",message_handler)
         self.hub_connection.on("Leaved",print)
-        self.hub_connection.on("Joined",print)
-        self.hub_connection.on("GameChanged",print)
-        self.hub_connection.on("GameDeleted",print)
-        self.hub_connection.on("GameCreated",print)
+        #self.hub_connection.on("Joined",print)
+        #self.hub_connection.on("GameChanged",print)
+        #self.hub_connection.on("GameDeleted",print)
+        #self.hub_connection.on("GameCreated",print)
         #self.hub_connection.on("GetGamesSlice",lambda m: got_slice(m,self.DB_ID,self.lock))
         #self.hub_connection.on_message(print)
         self.hub_connection.start()
@@ -170,13 +213,15 @@ class API:
 
 if __name__ == '__main__':
     api = API('CumDump')
-    api.get_token()
-    api.online()
-    #api.send_message('12')
-    #data = api.get_games_slice(0)
-    #print(data)
-    while True:
-        time.sleep(1)
-        data = api.get_games_slice(0)
-        print(data)
+    api.login()
+    url = api.upload_image("")
+    #api.get_token()
+    #api.online()
+    ##api.send_message('12')
+    ##data = api.get_games_slice(0)
+    ##print(data)
+    #while True:
+    #    time.sleep(1)
+    #    data = api.get_games_slice(0)
+    #    print(data)
         
